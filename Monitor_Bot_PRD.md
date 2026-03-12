@@ -22,7 +22,7 @@
 ## 3. File Structure
 
 ```
-monitor-bot/
+monitor_bot/
 ├── .github/
 │   └── workflows/
 │       └── deploy.yml
