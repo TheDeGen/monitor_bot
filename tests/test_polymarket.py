@@ -124,7 +124,7 @@ async def test_polymarket_check_produces_alert():
         {
             "size": 50000,
             "price": 0.10,
-            "slug": "big-event",
+            "slug": "big-event-option-yes",
             "eventSlug": "big-event",
             "proxyWallet": "0xabc123",
             "title": "Will something happen?",
@@ -146,6 +146,8 @@ async def test_polymarket_check_produces_alert():
     assert alerts[0].title == "Informed Flow Detected"
     assert "50,000" in alerts[0].body
     assert alerts[0].data["size"] == 50000
+    # Link should use eventSlug (event-level), not slug (option-level)
+    assert alerts[0].link == "https://polymarket.com/event/big-event"
 
 
 @pytest.mark.asyncio

@@ -55,6 +55,7 @@ class PolymarketMonitor(MonitorPlugin):
                 size = float(trade.get("size", 0))
                 price = float(trade.get("price", 1))
                 market_slug = trade.get("slug", trade.get("eventSlug", ""))
+                event_slug = trade.get("eventSlug", market_slug)
                 wallet = trade.get("proxyWallet", "")
                 market_question = trade.get("title", trade.get("name", "Unknown"))
 
@@ -87,8 +88,8 @@ class PolymarketMonitor(MonitorPlugin):
                     f"{wallet_age_days}d" if wallet_age_days is not None else "unknown"
                 )
                 event_url = (
-                    f"https://polymarket.com/event/{market_slug}"
-                    if market_slug
+                    f"https://polymarket.com/event/{event_slug}"
+                    if event_slug
                     else "https://polymarket.com"
                 )
 
