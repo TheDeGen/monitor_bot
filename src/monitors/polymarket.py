@@ -54,13 +54,14 @@ class PolymarketMonitor(MonitorPlugin):
             try:
                 size = float(trade.get("size", 0))
                 price = float(trade.get("price", 1))
+                dollar_value = size * price
                 market_slug = trade.get("slug", trade.get("eventSlug", ""))
                 event_slug = trade.get("eventSlug", market_slug)
                 wallet = trade.get("proxyWallet", "")
                 market_question = trade.get("title", trade.get("name", "Unknown"))
 
                 # FR-11: Filter by size and odds
-                if size < threshold:
+                if dollar_value < threshold:
                     continue
                 if price > max_odds:
                     continue
@@ -95,7 +96,7 @@ class PolymarketMonitor(MonitorPlugin):
 
                 body_parts = [
                     f"📊 <b>Market:</b> {market_question}",
-                    f"💰 <b>Trade Size:</b> ${size:,.2f}",
+                    f"💰 <b>Trade Size:</b> ${dollar_value:,.2f} ({size:,.0f} shares @ {price:.2%})",
                     f"📈 <b>Odds:</b> {price:.2%}",
                     f"👛 <b>Wallet Age:</b> {age_str}",
                 ]
@@ -109,7 +110,7 @@ class PolymarketMonitor(MonitorPlugin):
                     link=event_url,
                     data={
                         "market": dedup_key,
-                        "size": size,
+                        "size": dollar_value,
                         "price": price,
                         "wallet": wallet,
                         "wallet_age_days": wallet_age_days,

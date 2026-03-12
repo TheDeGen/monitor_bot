@@ -59,7 +59,7 @@ async def test_polymarket_check_filters_small_trades():
     monitor = PolymarketMonitor()
     monitor._session = AsyncMock()
 
-    # Trade with size below default threshold of 10000
+    # 100 shares at $0.10 = $10 dollar value, well below $10,000 threshold
     trades = [
         {
             "size": 100,
@@ -119,10 +119,10 @@ async def test_polymarket_check_produces_alert():
     monitor = PolymarketMonitor()
     monitor._session = AsyncMock()
 
-    # Trade meeting all criteria (no polygonscan key = wallet age check skipped)
+    # 200,000 shares at $0.10 = $20,000 dollar value (above $10,000 threshold)
     trades = [
         {
-            "size": 50000,
+            "size": 200000,
             "price": 0.10,
             "slug": "big-event-option-yes",
             "eventSlug": "big-event",
@@ -144,8 +144,8 @@ async def test_polymarket_check_produces_alert():
     assert len(alerts) == 1
     assert alerts[0].monitor == "POLYMARKET"
     assert alerts[0].title == "Informed Flow Detected"
-    assert "50,000" in alerts[0].body
-    assert alerts[0].data["size"] == 50000
+    assert "20,000" in alerts[0].body
+    assert alerts[0].data["size"] == pytest.approx(20000.0)
     # Link should use eventSlug (event-level), not slug (option-level)
     assert alerts[0].link == "https://polymarket.com/event/big-event"
 
@@ -158,7 +158,7 @@ async def test_polymarket_deduplication():
 
     trades = [
         {
-            "size": 50000,
+            "size": 200000,
             "price": 0.10,
             "slug": "dedup-market",
             "proxyWallet": "0xdedup",
