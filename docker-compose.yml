@@ -1,0 +1,13 @@
+services:
+  monitor-bot:
+    build: .
+    container_name: monitor-bot
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
