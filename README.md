@@ -20,15 +20,16 @@ Real-time crypto market monitoring bot for Telegram. Tracks Polymarket trades an
   - Smart money entries (top 1% by size)
 
 **Telegram Commands**
-| Command | Description |
-|---------|-------------|
-| `/status` | Uptime, active monitors, last check times |
-| `/recent [monitor]` | Last 10 alerts, optionally filtered |
-| `/config` | Current configuration values |
-| `/set_threshold <monitor> <key> <value>` | Update a threshold at runtime |
-| `/toggle <monitor>` | Enable/disable a monitor |
-| `/list_monitors` | Show all plugins with status and interval |
-| `/test_alert` | Send a sample alert to verify the channel |
+| Command | Description | Access |
+|---------|-------------|--------|
+| `/status` | Uptime, active monitors, last check times | Public |
+| `/recent [monitor]` | Last 10 alerts, optionally filtered | Public |
+| `/list_monitors` | Show all plugins with status and interval | Public |
+| `/test_alert` | Send a sample alert to verify the channel | Public |
+| `/chatid` | Show the current chat's numeric ID | Public |
+| `/config` | Current configuration values | Admin |
+| `/set_threshold <monitor> <key> <value>` | Update a threshold at runtime | Admin |
+| `/toggle <monitor>` | Enable/disable a monitor | Admin |
 
 ## Quick Start
 
@@ -54,7 +55,8 @@ Real-time crypto market monitoring bot for Telegram. Tracks Polymarket trades an
 3. Fill in your credentials in `.env`:
    ```
    TELEGRAM_BOT_TOKEN=your-bot-token
-   TELEGRAM_CHAT_ID=your-chat-id
+   TELEGRAM_CHAT_IDS=your-chat-id,-100your-group-id
+   ADMIN_USER_IDS=your-telegram-user-id
    ```
 
 4. Run with Docker Compose:
@@ -80,7 +82,9 @@ All settings are loaded from environment variables with sensible defaults. Runti
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TELEGRAM_BOT_TOKEN` | *required* | Telegram bot API token |
-| `TELEGRAM_CHAT_ID` | *required* | Chat ID for alert delivery |
+| `TELEGRAM_CHAT_IDS` | *required* | Comma-separated chat IDs for alert delivery (DMs and/or groups) |
+| `TELEGRAM_CHAT_ID` | — | Legacy single chat ID (fallback if `TELEGRAM_CHAT_IDS` is not set) |
+| `ADMIN_USER_IDS` | *(empty)* | Comma-separated Telegram user IDs allowed to run admin commands. Empty = unrestricted |
 | `POLY_THRESHOLD` | `10000` | Minimum trade size ($) |
 | `POLY_MAX_WALLET_AGE_DAYS` | `90` | Max wallet age filter (days) |
 | `POLY_MAX_ODDS` | `0.20` | Max market odds filter |
