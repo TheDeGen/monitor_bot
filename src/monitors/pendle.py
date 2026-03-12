@@ -172,30 +172,46 @@ class PendleMonitor(MonitorPlugin):
     # ── API helpers ─────────────────────────────────────────────────────
 
     async def _fetch_markets(self, chain_id: int) -> list[dict]:
-        """Fetch all active markets for a chain."""
+        """Fetch all active markets for a chain, paginating if needed."""
         assert self._session is not None
         url = f"{PENDLE_API}/{chain_id}/markets"
-        try:
-            async with self._session.get(
-                url, params={"order_by": "name:1", "skip": 0, "limit": 100}
-            ) as resp:
-                if resp.status == 429:
-                    logger.warning("Pendle API rate limited for chain %d", chain_id)
-                    return []
-                if resp.status >= 500:
-                    logger.warning(
-                        "Pendle API error %d for chain %d", resp.status, chain_id
-                    )
-                    return []
-                resp.raise_for_status()
-                data = await resp.json()
-                # API may wrap in {"results": [...]} or return list directly
-                if isinstance(data, list):
-                    return data
-                return data.get("results", data.get("markets", []))
-        except aiohttp.ClientError:
-            logger.exception("Failed to fetch Pendle markets for chain %d", chain_id)
-            return []
+        all_markets: list[dict] = []
+        skip = 0
+        limit = 100
+
+        while True:
+            try:
+                async with self._session.get(
+                    url, params={"order_by": "name:1", "skip": skip, "limit": limit}
+                ) as resp:
+                    if resp.status == 429:
+                        logger.warning("Pendle API rate limited for chain %d", chain_id)
+                        break
+                    if resp.status >= 500:
+                        logger.warning(
+                            "Pendle API error %d for chain %d", resp.status, chain_id
+                        )
+                        break
+                    resp.raise_for_status()
+                    data = await resp.json()
+
+                    if isinstance(data, list):
+                        all_markets.extend(data)
+                        break  # No pagination info available
+
+                    results = data.get("results", data.get("markets", []))
+                    all_markets.extend(results)
+
+                    total = data.get("total", 0)
+                    skip += limit
+                    if skip >= total or not results:
+                        break
+
+            except aiohttp.ClientError:
+                logger.exception("Failed to fetch Pendle markets for chain %d", chain_id)
+                break
+
+        return all_markets
 
     async def _fetch_market_detail(self, chain_id: int, address: str) -> dict | None:
         """Fetch detailed market data."""

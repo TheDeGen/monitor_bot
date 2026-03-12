@@ -50,6 +50,7 @@ class MonitorScheduler:
                 args=[name],
                 id=f"monitor_{name}",
                 replace_existing=True,
+                max_instances=1,
             )
             logger.info("Scheduled %s every %ds", name, plugin.interval)
 
@@ -60,6 +61,7 @@ class MonitorScheduler:
             hours=1,
             id="purge",
             replace_existing=True,
+            max_instances=1,
         )
 
         self._scheduler.start()

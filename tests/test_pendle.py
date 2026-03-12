@@ -357,3 +357,69 @@ async def test_pendle_unknown_chain():
     assert alerts == []
     # Session.get should NOT have been called for an unknown chain
     monitor._session.get.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Pagination tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pendle_pagination():
+    """Should paginate through all markets when total > limit."""
+    monitor = PendleMonitor()
+    monitor._session = AsyncMock()
+
+    # Simulate 3 pages of markets (limit=100, total=250)
+    page1 = {"total": 250, "skip": 0, "limit": 100, "results": [{"address": f"0xp1_{i}"} for i in range(100)]}
+    page2 = {"total": 250, "skip": 100, "limit": 100, "results": [{"address": f"0xp2_{i}"} for i in range(100)]}
+    page3 = {"total": 250, "skip": 200, "limit": 100, "results": [{"address": f"0xp3_{i}"} for i in range(50)]}
+
+    call_count = 0
+
+    def route_get(url, **kwargs):
+        nonlocal call_count
+        params = kwargs.get("params", {})
+        skip = params.get("skip", 0)
+        if "/markets/" in url:
+            # Detail endpoint — return empty market to avoid side effects
+            return _mock_json_response({"address": "0x", "name": "Test", "ptDiscount": 0})
+        # Markets list endpoint
+        call_count += 1
+        if skip == 0:
+            return _mock_json_response(page1)
+        elif skip == 100:
+            return _mock_json_response(page2)
+        else:
+            return _mock_json_response(page3)
+
+    monitor._session.get = MagicMock(side_effect=route_get)
+
+    os.environ["PENDLE_CHAINS"] = "ethereum"
+    markets = await monitor._fetch_markets(1)
+
+    assert len(markets) == 250
+    assert call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_pendle_pagination_rate_limit_mid_page():
+    """Should return partial results if rate limited during pagination."""
+    monitor = PendleMonitor()
+    monitor._session = AsyncMock()
+
+    page1 = {"total": 200, "skip": 0, "limit": 100, "results": [{"address": f"0x_{i}"} for i in range(100)]}
+
+    def route_get(url, **kwargs):
+        params = kwargs.get("params", {})
+        skip = params.get("skip", 0)
+        if skip == 0:
+            return _mock_json_response(page1)
+        # Rate limited on page 2
+        return _mock_json_response({}, status=429)
+
+    monitor._session.get = MagicMock(side_effect=route_get)
+
+    markets = await monitor._fetch_markets(1)
+    # Should have the first 100 even though page 2 was rate limited
+    assert len(markets) == 100

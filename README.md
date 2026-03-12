@@ -5,19 +5,17 @@ Real-time crypto market monitoring bot for Telegram. Tracks Polymarket trades an
 ## Features
 
 **Polymarket Monitor**
-- Detects large trades on low-odds markets (configurable thresholds)
-- Filters by wallet age via Polygonscan (caches lookups in SQLite)
-- Flags thin markets with fewer than 5 unique participants
-- Deduplicates alerts per market+wallet within 6 hours
+- Detects large trades (>$10k) on low-odds markets (<20%) by fresh wallets (<90 days)
+- Server-side CASH filter + large-market discovery via Gamma API (min $100k volume)
+- Wallet age scraped from Polygonscan HTML (cached in SQLite)
+- TX hash deduplication (50k in-memory deque) + DB dedup (6h window)
+- Polls every 15 seconds, fetches up to 10,000 trades per cycle
 
 **Pendle Monitor**
-- Scans markets across Ethereum, Arbitrum, BNB, and Optimism
-- Detects 5 types of yield dislocations:
-  - PT implied vs realised yield spread
-  - PT discount widening (1h comparison)
-  - YT pricing inconsistency vs `(1 - PT price)`
-  - Basis vs Aave/Compound lending rates (via DeFi Llama)
-  - Smart money entries (top 1% by size)
+- Scans markets across 8 chains: Ethereum, Arbitrum, BNB, Optimism, Base, Sonic, HyperEVM, Plasma
+- Detects PT discount widening (>1% jump over 4 hours)
+- Full pagination support for chains with 100+ markets
+- Polls every 90 seconds
 
 **Telegram Commands**
 | Command | Description | Access |
@@ -85,13 +83,14 @@ All settings are loaded from environment variables with sensible defaults. Runti
 | `TELEGRAM_CHAT_IDS` | *required* | Comma-separated chat IDs for alert delivery (DMs and/or groups) |
 | `TELEGRAM_CHAT_ID` | — | Legacy single chat ID (fallback if `TELEGRAM_CHAT_IDS` is not set) |
 | `ADMIN_USER_IDS` | *(empty)* | Comma-separated Telegram user IDs allowed to run admin commands. Empty = unrestricted |
-| `POLY_THRESHOLD` | `10000` | Minimum trade size ($) |
+| `POLY_THRESHOLD` | `10000` | Minimum trade size in USD |
 | `POLY_MAX_WALLET_AGE_DAYS` | `90` | Max wallet age filter (days) |
 | `POLY_MAX_ODDS` | `0.20` | Max market odds filter |
-| `PENDLE_CHAINS` | `ethereum,arbitrum,bnb,optimism` | Chains to scan |
+| `POLY_MIN_MARKET_VOLUME` | `100000` | Minimum market volume ($) for large-market filter |
+| `PENDLE_CHAINS` | `ethereum,arbitrum,bnb,optimism,base,sonic,hyperevm,plasma` | Chains to scan |
+| `PENDLE_DISCOUNT_THRESHOLD` | `0.01` | PT discount widening threshold (1% = 0.01) |
 | `DB_PATH` | `data/monitor.db` | SQLite database path |
 | `PURGE_HOURS` | `48` | Auto-purge data older than N hours |
-| `POLYGONSCAN_API_KEY` | *optional* | For wallet age lookups |
 
 ## Project Structure
 
