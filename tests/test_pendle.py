@@ -10,7 +10,7 @@ import pytest
 
 # Set required env vars before importing our modules
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
-os.environ.setdefault("TELEGRAM_CHAT_ID", "123456")
+os.environ.setdefault("TELEGRAM_CHAT_IDS", "123456")
 
 from src import config, db
 from src.monitors.pendle import CHAIN_IDS, PendleMonitor
