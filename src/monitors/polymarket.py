@@ -6,6 +6,8 @@ FR-10 through FR-16 implementation.
 from __future__ import annotations
 
 import logging
+import time
+from collections import deque
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
@@ -16,7 +18,10 @@ from src.plugin_base import Alert, MonitorPlugin
 logger = logging.getLogger(__name__)
 
 TRADES_URL = "https://data-api.polymarket.com/trades"
+EVENTS_URL = "https://gamma-api.polymarket.com/events"
 POLYGONSCAN_API = "https://api.polygonscan.com/api"
+
+_MARKET_REFRESH_INTERVAL = 3600
 
 
 class PolymarketMonitor(MonitorPlugin):
@@ -25,6 +30,9 @@ class PolymarketMonitor(MonitorPlugin):
 
     def __init__(self) -> None:
         self._session: aiohttp.ClientSession | None = None
+        self._event_ids: list[int] = []
+        self._events_last_refreshed: float = 0.0
+        self._seen_tx_hashes: deque[str] = deque(maxlen=50_000)
 
     async def setup(self) -> None:
         self._session = aiohttp.ClientSession(
@@ -43,6 +51,9 @@ class PolymarketMonitor(MonitorPlugin):
         max_odds = config.get_float("POLY_MAX_ODDS")
         max_wallet_age_days = config.get_int("POLY_MAX_WALLET_AGE_DAYS")
 
+        # Refresh large-market list periodically
+        await self._maybe_refresh_events()
+
         # FR-10: Fetch recent trades
         trades = await self._fetch_trades()
         if not trades:
@@ -52,6 +63,10 @@ class PolymarketMonitor(MonitorPlugin):
 
         for trade in trades:
             try:
+                tx_hash = trade.get("transactionHash", "")
+                if tx_hash and tx_hash in self._seen_tx_hashes:
+                    continue
+
                 size = float(trade.get("size", 0))
                 price = float(trade.get("price", 1))
                 dollar_value = size * price
@@ -65,6 +80,9 @@ class PolymarketMonitor(MonitorPlugin):
                     continue
                 if price > max_odds:
                     continue
+
+                if tx_hash:
+                    self._seen_tx_hashes.append(tx_hash)
 
                 # FR-15: Deduplicate within 6 hours
                 dedup_key = f"{market_slug}:{wallet}"
@@ -126,12 +144,23 @@ class PolymarketMonitor(MonitorPlugin):
         return alerts
 
     async def _fetch_trades(self) -> list[dict]:
-        """Fetch recent trades from Polymarket data API."""
+        """Fetch recent trades from Polymarket data API.
+
+        Uses server-side CASH filter to only return trades above our dollar
+        threshold, and optionally restricts to large-market event IDs.
+        """
         assert self._session is not None
+        threshold = config.get_float("POLY_THRESHOLD")
         try:
-            params = {
-                "limit": "100",
+            params: dict[str, str] = {
+                "limit": "10000",
+                "filterType": "CASH",
+                "filterAmount": str(threshold),
             }
+            # Narrow to large markets if we have event IDs
+            if self._event_ids:
+                params["eventId"] = ",".join(str(eid) for eid in self._event_ids)
+
             async with self._session.get(TRADES_URL, params=params) as resp:
                 if resp.status == 429:
                     logger.warning("Polymarket API rate limited")
@@ -147,6 +176,56 @@ class PolymarketMonitor(MonitorPlugin):
                 return data.get("data", data.get("trades", []))
         except aiohttp.ClientError:
             logger.exception("Failed to fetch Polymarket trades")
+            return []
+
+    async def _maybe_refresh_events(self) -> None:
+        """Refresh the large-market event ID list if the cache is stale."""
+        now = time.monotonic()
+        if now - self._events_last_refreshed < _MARKET_REFRESH_INTERVAL:
+            return
+        event_ids = await self._fetch_large_event_ids()
+        if event_ids:
+            self._event_ids = event_ids
+            logger.info("Refreshed large-market list: %d events", len(self._event_ids))
+        elif not self._event_ids:
+            # First attempt failed — don't filter by event ID
+            logger.warning("Failed to fetch large events; trading without event filter")
+        # Update timestamp even on failure to avoid hammering on errors
+        self._events_last_refreshed = now
+
+    async def _fetch_large_event_ids(self) -> list[int]:
+        """Fetch active events above the minimum volume from the Gamma API."""
+        assert self._session is not None
+        min_volume = config.get_float("POLY_MIN_MARKET_VOLUME")
+        try:
+            params: dict[str, str] = {
+                "active": "true",
+                "closed": "false",
+                "volume_min": str(min_volume),
+                "limit": "500",
+            }
+            async with self._session.get(EVENTS_URL, params=params) as resp:
+                if resp.status == 429:
+                    logger.warning("Gamma API rate limited")
+                    return []
+                if resp.status >= 500:
+                    logger.warning("Gamma API server error: %d", resp.status)
+                    return []
+                resp.raise_for_status()
+                events = await resp.json()
+                if not isinstance(events, list):
+                    return []
+                event_ids: list[int] = []
+                for event in events:
+                    eid = event.get("id")
+                    if eid is not None:
+                        try:
+                            event_ids.append(int(eid))
+                        except (ValueError, TypeError):
+                            continue
+                return event_ids
+        except aiohttp.ClientError:
+            logger.exception("Failed to fetch Polymarket events")
             return []
 
     async def _get_wallet_age_days(self, address: str) -> int | None:

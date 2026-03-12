@@ -14,6 +14,7 @@ _DEFAULTS: dict[str, str] = {
     "POLY_THRESHOLD": "10000",
     "POLY_MAX_WALLET_AGE_DAYS": "90",
     "POLY_MAX_ODDS": "0.20",
+    "POLY_MIN_MARKET_VOLUME": "100000",
     "PENDLE_CHAINS": "ethereum,arbitrum,bnb,optimism",
     "DB_PATH": "data/monitor.db",
     "PURGE_HOURS": "48",
