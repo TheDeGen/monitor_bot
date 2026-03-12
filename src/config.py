@@ -6,7 +6,8 @@ import os
 from typing import Any
 
 # Required env vars (no defaults — bot must refuse to start without them)
-_REQUIRED = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
+# TELEGRAM_CHAT_ID kept for backward compat; prefer TELEGRAM_CHAT_IDS (comma-separated)
+_REQUIRED = ("TELEGRAM_BOT_TOKEN",)
 
 # Optional env vars with defaults
 _DEFAULTS: dict[str, str] = {
@@ -17,6 +18,7 @@ _DEFAULTS: dict[str, str] = {
     "DB_PATH": "data/monitor.db",
     "PURGE_HOURS": "48",
     "POLYGONSCAN_API_KEY": "",
+    "ADMIN_USER_IDS": "",
 }
 
 # Runtime override store (populated from the ``settings`` SQLite table)
@@ -78,6 +80,13 @@ def validate() -> None:
             f"Missing required environment variables: {', '.join(missing)}"
         )
 
+    # At least one alert destination must be configured
+    has_ids = os.environ.get("TELEGRAM_CHAT_IDS") or os.environ.get("TELEGRAM_CHAT_ID")
+    if not has_ids:
+        raise SystemExit(
+            "Missing alert destination: set TELEGRAM_CHAT_IDS (preferred) or TELEGRAM_CHAT_ID"
+        )
+
 
 def all_config() -> dict[str, str]:
     """Return a dict of all known config keys and their current effective values."""
@@ -92,10 +101,55 @@ def all_config() -> dict[str, str]:
                 result[key] = val
         except KeyError:
             result[key] = "<NOT SET>"
+
+    # Show alert chat IDs
+    chat_ids = get_alert_chat_ids()
+    result["ALERT_CHAT_IDS"] = ", ".join(str(c) for c in chat_ids) if chat_ids else "<NONE>"
+
+    # Show admin user IDs
+    admin_ids = get_admin_user_ids()
+    result["ADMIN_USER_IDS"] = ", ".join(str(a) for a in admin_ids) if admin_ids else "<unrestricted>"
+
     for key in _DEFAULTS:
+        if key == "ADMIN_USER_IDS":
+            continue  # already displayed above
         val = get(key)
         if "TOKEN" in key or "KEY" in key:
             result[key] = val[:8] + "..." if len(val) > 8 else "***"
         else:
             result[key] = val
     return result
+
+
+
+def get_alert_chat_ids() -> list[int]:
+    """Return the list of chat IDs that should receive scheduled alerts.
+
+    Reads ``TELEGRAM_CHAT_IDS`` first (comma-separated).  Falls back to the
+    legacy single ``TELEGRAM_CHAT_ID`` for backward compatibility.
+    """
+    try:
+        raw = get("TELEGRAM_CHAT_IDS")
+    except KeyError:
+        raw = None
+
+    if raw:
+        return [int(cid.strip()) for cid in raw.split(",") if cid.strip()]
+
+    # Fallback to legacy single-value key
+    try:
+        return [int(get("TELEGRAM_CHAT_ID"))]
+    except KeyError:
+        return []
+
+
+def get_admin_user_ids() -> set[int]:
+    """Return the set of Telegram user IDs allowed to run admin commands.
+
+    If ``ADMIN_USER_IDS`` is empty or unset, admin commands are unrestricted
+    (backward-compatible default for private-chat-only setups).
+    """
+    raw = get("ADMIN_USER_IDS", "")
+    if not raw:
+        return set()
+    return {int(uid.strip()) for uid in raw.split(",") if uid.strip()}

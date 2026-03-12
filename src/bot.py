@@ -35,30 +35,63 @@ def set_scheduler(scheduler: MonitorScheduler) -> None:
 
 
 async def send_alert(app: Application, alert) -> None:  # type: ignore[type-arg]
-    """Format and send an Alert to the configured Telegram chat."""
+    """Format and send an Alert to all configured Telegram chats."""
     from src.plugin_base import Alert
 
-    chat_id = config.get("TELEGRAM_CHAT_ID")
+    chat_ids = config.get_alert_chat_ids()
+    if not chat_ids:
+        logger.warning("No alert chat IDs configured — alert dropped: [%s] %s", alert.monitor, alert.title)
+        return
+
     text = (
         f"🚨 <b>[{alert.monitor}]</b> {alert.title}\n\n"
         f"{alert.body}\n\n"
         f'🔗 <a href="{alert.link}">View</a>'
     )
-    try:
-        await app.bot.send_message(
-            chat_id=int(chat_id),
-            text=text,
-            parse_mode="HTML",
-            disable_web_page_preview=True,
-        )
-        logger.info("Alert sent: [%s] %s", alert.monitor, alert.title)
-    except Exception as exc:
-        logger.exception("Failed to send alert: [%s] %s — %s", alert.monitor, alert.title, exc)
-        raise
+    for cid in chat_ids:
+        try:
+            await app.bot.send_message(
+                chat_id=cid,
+                text=text,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+            logger.info("Alert sent to %s: [%s] %s", cid, alert.monitor, alert.title)
+        except Exception:
+            logger.exception("Failed to send alert to %s: [%s] %s", cid, alert.monitor, alert.title)
+
+# ── Admin guard ────────────────────────────────────────────────────────────
+
+
+def _admin_only(handler):
+    """Decorator: reject the command if the caller is not an admin.
+
+    When ``ADMIN_USER_IDS`` is empty (default), all users are allowed
+    (backward-compatible for private-chat-only setups).
+    """
+
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        admin_ids = config.get_admin_user_ids()
+        if admin_ids:
+            user_id = update.effective_user.id if update.effective_user else None
+            if user_id not in admin_ids:
+                await update.message.reply_text(  # type: ignore[union-attr]
+                    "⛔ You are not authorised to use this command."
+                )
+                logger.warning(
+                    "Unauthorised command attempt by user %s in chat %s",
+                    user_id,
+                    update.effective_chat.id if update.effective_chat else "?",
+                )
+                return
+        return await handler(update, context)
+
+    wrapper.__name__ = handler.__name__
+    wrapper.__doc__ = handler.__doc__
+    return wrapper
 
 
 # ── Command handlers ───────────────────────────────────────────────────────
-
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/status — uptime, active monitors, last check times."""
@@ -192,6 +225,14 @@ async def cmd_test_alert(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(  # type: ignore[union-attr]
             f"\u274c Failed to send alert: {exc}"
         )
+
+
+async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/chatid — reply with the current chat's numeric ID."""
+    chat_id = update.effective_chat.id if update.effective_chat else None
+    await update.message.reply_text(  # type: ignore[union-attr]
+        f"Chat ID: <code>{chat_id}</code>", parse_mode="HTML"
+    )
 # ── Application builder ────────────────────────────────────────────────────
 
 
@@ -203,13 +244,17 @@ def build_app() -> Application:  # type: ignore[type-arg]
     token = config.get("TELEGRAM_BOT_TOKEN")
     app = ApplicationBuilder().token(token).build()
 
+    # Public commands — anyone can use
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("recent", cmd_recent))
-    app.add_handler(CommandHandler("config", cmd_config))
-    app.add_handler(CommandHandler("set_threshold", cmd_set_threshold))
-    app.add_handler(CommandHandler("toggle", cmd_toggle))
     app.add_handler(CommandHandler("list_monitors", cmd_list_monitors))
     app.add_handler(CommandHandler("test_alert", cmd_test_alert))
+    app.add_handler(CommandHandler("chatid", cmd_chatid))
+
+    # Admin-only commands
+    app.add_handler(CommandHandler("config", _admin_only(cmd_config)))
+    app.add_handler(CommandHandler("set_threshold", _admin_only(cmd_set_threshold)))
+    app.add_handler(CommandHandler("toggle", _admin_only(cmd_toggle)))
 
     logger.info("Telegram bot application built")
     return app
