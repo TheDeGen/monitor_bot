@@ -56,7 +56,7 @@ async def test_polymarket_init():
     """Plugin should have correct name and interval."""
     monitor = PolymarketMonitor()
     assert monitor.name == "POLYMARKET"
-    assert monitor.interval == 60
+    assert monitor.interval == 15
 
 
 @pytest.mark.asyncio

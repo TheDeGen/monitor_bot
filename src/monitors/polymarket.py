@@ -26,7 +26,7 @@ _MARKET_REFRESH_INTERVAL = 3600
 
 class PolymarketMonitor(MonitorPlugin):
     name = "POLYMARKET"
-    interval = 60  # every 60 seconds
+    interval = 15  # every 15 seconds
 
     def __init__(self) -> None:
         self._session: aiohttp.ClientSession | None = None
