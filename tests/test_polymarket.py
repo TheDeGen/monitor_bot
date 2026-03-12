@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -35,11 +36,12 @@ def _make_monitor() -> PolymarketMonitor:
     return monitor
 
 
-def _mock_response(*, status: int = 200, json_data=None):
+def _mock_response(*, status: int = 200, json_data=None, text_data: str = ""):
     """Create a mock aiohttp response usable as async context manager."""
     resp = AsyncMock()
     resp.status = status
     resp.json = AsyncMock(return_value=json_data if json_data is not None else [])
+    resp.text = AsyncMock(return_value=text_data)
     resp.raise_for_status = MagicMock()
     resp.__aenter__ = AsyncMock(return_value=resp)
     resp.__aexit__ = AsyncMock(return_value=False)
@@ -522,3 +524,55 @@ async def test_maybe_refresh_events_keeps_old_ids_on_failure():
     assert monitor._event_ids == [99, 88]
     # But timestamp should be updated to avoid hammering
     assert monitor._events_last_refreshed > 0
+
+
+@pytest.mark.asyncio
+async def test_wallet_age_scraping_cached():
+    monitor = PolymarketMonitor()
+
+    await db.set_wallet_age("0xtest123", "2024-01-01T00:00:00+00:00")
+
+    age_days = await monitor._get_wallet_age_days("0xtest123")
+
+    expected = (
+        datetime.now(timezone.utc) - datetime.fromisoformat("2024-01-01T00:00:00+00:00")
+    ).days
+    assert age_days is not None
+    assert abs(age_days - expected) <= 1
+
+
+@pytest.mark.asyncio
+async def test_wallet_age_scraping_parses_html():
+    monitor = PolymarketMonitor()
+    monitor._session = AsyncMock()
+
+    html = (
+        '<div>ContractCreator <a href="/address/0xcreator">0xcreator</a> '
+        'at txn <a href="/tx/0xtx">0xtx</a> '
+        '<span data-bs-title="2024-06-15 10:30:00">1 yr 270 days ago</span></div>'
+    )
+    monitor._session.get = MagicMock(return_value=_mock_response(text_data=html))
+
+    age_days = await monitor._get_wallet_age_days("0xnewwallet")
+
+    expected = (
+        datetime.now(timezone.utc) - datetime.fromisoformat("2024-06-15T10:30:00+00:00")
+    ).days
+    assert age_days is not None
+    assert abs(age_days - expected) <= 1
+
+    cached = await db.get_wallet_age("0xnewwallet")
+    assert cached is not None
+    cached_dt = datetime.fromisoformat(cached)
+    assert cached_dt == datetime.fromisoformat("2024-06-15T10:30:00+00:00")
+
+
+@pytest.mark.asyncio
+async def test_wallet_age_scraping_handles_failure():
+    monitor = PolymarketMonitor()
+    monitor._session = AsyncMock()
+    monitor._session.get = MagicMock(return_value=_mock_response(status=403))
+
+    age_days = await monitor._get_wallet_age_days("0xblocked")
+
+    assert age_days is None

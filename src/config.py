@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from typing import Any
 
 # Required env vars (no defaults — bot must refuse to start without them)
 # TELEGRAM_CHAT_ID kept for backward compat; prefer TELEGRAM_CHAT_IDS (comma-separated)
@@ -18,7 +17,6 @@ _DEFAULTS: dict[str, str] = {
     "PENDLE_CHAINS": "ethereum,arbitrum,bnb,optimism,base,sonic,hyperevm,plasma",
     "DB_PATH": "data/monitor.db",
     "PURGE_HOURS": "48",
-    "POLYGONSCAN_API_KEY": "",
     "ADMIN_USER_IDS": "",
 }
 
@@ -39,7 +37,7 @@ def set_override(key: str, value: str) -> None:
 
 def remove_override(key: str) -> None:
     """Remove a single runtime override."""
-    _runtime_overrides.pop(key, None)
+    _ = _runtime_overrides.pop(key, None)
 
 
 def get(key: str, fallback: str | None = None) -> str:
@@ -105,11 +103,15 @@ def all_config() -> dict[str, str]:
 
     # Show alert chat IDs
     chat_ids = get_alert_chat_ids()
-    result["ALERT_CHAT_IDS"] = ", ".join(str(c) for c in chat_ids) if chat_ids else "<NONE>"
+    result["ALERT_CHAT_IDS"] = (
+        ", ".join(str(c) for c in chat_ids) if chat_ids else "<NONE>"
+    )
 
     # Show admin user IDs
     admin_ids = get_admin_user_ids()
-    result["ADMIN_USER_IDS"] = ", ".join(str(a) for a in admin_ids) if admin_ids else "<unrestricted>"
+    result["ADMIN_USER_IDS"] = (
+        ", ".join(str(a) for a in admin_ids) if admin_ids else "<unrestricted>"
+    )
 
     for key in _DEFAULTS:
         if key == "ADMIN_USER_IDS":
@@ -120,7 +122,6 @@ def all_config() -> dict[str, str]:
         else:
             result[key] = val
     return result
-
 
 
 def get_alert_chat_ids() -> list[int]:

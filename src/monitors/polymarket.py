@@ -6,9 +6,11 @@ FR-10 through FR-16 implementation.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections import deque
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import aiohttp
 
@@ -19,7 +21,6 @@ logger = logging.getLogger(__name__)
 
 TRADES_URL = "https://data-api.polymarket.com/trades"
 EVENTS_URL = "https://gamma-api.polymarket.com/events"
-POLYGONSCAN_API = "https://api.polygonscan.com/api"
 
 _MARKET_REFRESH_INTERVAL = 3600
 
@@ -143,7 +144,7 @@ class PolymarketMonitor(MonitorPlugin):
 
         return alerts
 
-    async def _fetch_trades(self) -> list[dict]:
+    async def _fetch_trades(self) -> list[dict[str, Any]]:
         """Fetch recent trades from Polymarket data API.
 
         Uses server-side CASH filter to only return trades above our dollar
@@ -229,7 +230,7 @@ class PolymarketMonitor(MonitorPlugin):
             return []
 
     async def _get_wallet_age_days(self, address: str) -> int | None:
-        """Get wallet age in days. Uses DB cache, falls back to Polygonscan."""
+        """Get wallet age in days. Uses DB cache, falls back to Polygonscan HTML."""
         if not address:
             return None
 
@@ -238,51 +239,91 @@ class PolymarketMonitor(MonitorPlugin):
         if cached:
             try:
                 created = datetime.fromisoformat(cached)
-                age = datetime.now(timezone.utc) - created.replace(tzinfo=timezone.utc)
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                else:
+                    created = created.astimezone(timezone.utc)
+                age = datetime.now(timezone.utc) - created
                 return age.days
             except ValueError:
                 pass
 
-        # Fetch from Polygonscan
-        api_key = config.get("POLYGONSCAN_API_KEY", "")
-        if not api_key:
-            return None
-
         assert self._session is not None
+        url = f"https://polygonscan.com/address/{address}"
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            )
+        }
+
         try:
-            params = {
-                "module": "account",
-                "action": "txlist",
-                "address": address,
-                "startblock": "0",
-                "endblock": "99999999",
-                "page": "1",
-                "offset": "1",
-                "sort": "asc",
-                "apikey": api_key,
-            }
-            async with self._session.get(POLYGONSCAN_API, params=params) as resp:
-                if resp.status == 429:
-                    logger.warning("Polygonscan rate limited")
+            async with self._session.get(url, headers=headers) as resp:
+                if resp.status in (403, 429):
+                    logger.warning(
+                        "Polygonscan blocked request for %s (status=%d)",
+                        address,
+                        resp.status,
+                    )
                     return None
-                resp.raise_for_status()
-                data = await resp.json()
+                if resp.status != 200:
+                    logger.warning(
+                        "Polygonscan returned status %d for %s", resp.status, address
+                    )
+                    return None
+                html = await resp.text()
 
-            results = data.get("result", [])
-            if not results or not isinstance(results, list):
+            match = re.search(
+                r"(?:ContractCreator|Funded\s*By).*?(?:data-bs-title|title)=[\"\'](\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})",
+                html,
+                re.DOTALL | re.IGNORECASE,
+            )
+
+            created_at: datetime | None = None
+            if match:
+                ts = match.group(1).replace(" ", "T")
+                created_at = datetime.fromisoformat(ts).replace(tzinfo=timezone.utc)
+
+            if created_at is None:
+                rel_years_days_match = re.search(
+                    r"(?:ContractCreator|Funded\s*By).*?(\d+)\s*(?:yr|year)s?\s*(?:(\d+)\s*(?:day)s?)?\s*ago",
+                    html,
+                    re.DOTALL | re.IGNORECASE,
+                )
+                if rel_years_days_match:
+                    years = int(rel_years_days_match.group(1))
+                    days = int(rel_years_days_match.group(2) or 0)
+                    total_days = years * 365 + days
+                    created_at = datetime.now(timezone.utc) - timedelta(days=total_days)
+
+            if created_at is None:
+                rel_days_match = re.search(
+                    r"(?:ContractCreator|Funded\s*By).*?(\d+)\s*(?:day)s?\s*ago",
+                    html,
+                    re.DOTALL | re.IGNORECASE,
+                )
+                if rel_days_match:
+                    days = int(rel_days_match.group(1))
+                    created_at = datetime.now(timezone.utc) - timedelta(days=days)
+
+            if created_at is None:
+                rel_hours_match = re.search(
+                    r"(?:ContractCreator|Funded\s*By).*?(\d+)\s*(?:hr|hour)s?\s*ago",
+                    html,
+                    re.DOTALL | re.IGNORECASE,
+                )
+                if rel_hours_match:
+                    created_at = datetime.now(timezone.utc)
+
+            if created_at is None:
                 return None
 
-            first_tx = results[0]
-            timestamp = int(first_tx.get("timeStamp", 0))
-            if timestamp == 0:
-                return None
-
-            created_at = datetime.fromtimestamp(timestamp, tz=timezone.utc)
             await db.set_wallet_age(address, created_at.isoformat())
 
             age = datetime.now(timezone.utc) - created_at
             return age.days
 
-        except (aiohttp.ClientError, ValueError, KeyError):
+        except (aiohttp.ClientError, ValueError, KeyError, TypeError):
             logger.exception("Failed to fetch wallet age for %s", address)
             return None
